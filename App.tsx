@@ -6,6 +6,7 @@ import { formatMoney, calculatePrestigePoints, formatNumber } from './utils';
 import BusinessCard from './components/BusinessCard';
 import FloatingTexts from './components/FloatingTexts';
 import MissionItem from './components/MissionItem';
+import GemSpawn from './components/GemSpawn';
 
 const STORAGE_KEY = 'money_empire_save_react_v1';
 
@@ -33,18 +34,27 @@ const App: React.FC = () => {
   const [showPrestigeModal, setShowPrestigeModal] = useState(false);
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  
+  // Gem Spawn State
+  const [activeGem, setActiveGem] = useState<{ id: number; x: number; y: number } | null>(null);
 
   // Refs for Game Loop
   const stateRef = useRef(gameState);
+  const activeGemRef = useRef(activeGem);
   const lastTickRef = useRef(Date.now());
   const requestRef = useRef<number>(0);
   const historyTimerRef = useRef(0);
   const missionCheckTimerRef = useRef(0);
+  const gemSpawnTimerRef = useRef(0);
 
   // Sync ref with state on manual updates (purchases, etc)
   useEffect(() => {
     stateRef.current = gameState;
   }, [gameState]);
+
+  useEffect(() => {
+    activeGemRef.current = activeGem;
+  }, [activeGem]);
 
   // Helper: Toast
   const addToast = useCallback((message: string, type: Toast['type']) => {
@@ -220,7 +230,7 @@ const App: React.FC = () => {
       state.totalEarned += moneyGained;
     }
 
-    // Check Missions periodically (e.g. every 1 second)
+    // Check Missions periodically
     missionCheckTimerRef.current += dt;
     if (missionCheckTimerRef.current >= 1) {
         missionCheckTimerRef.current = 0;
@@ -228,6 +238,25 @@ const App: React.FC = () => {
         if (missionsUpdatedState) {
             Object.assign(state, missionsUpdatedState);
         }
+    }
+
+    // Gem Spawn Logic
+    gemSpawnTimerRef.current += dt;
+    if (gemSpawnTimerRef.current >= 1) {
+      gemSpawnTimerRef.current = 0;
+      // ~2.2% chance per second to spawn if none active (avg every 45s)
+      if (!activeGemRef.current && Math.random() < 0.022) {
+        const id = Date.now();
+        const x = Math.random() * 80 + 10; // 10% to 90%
+        const y = Math.random() * 80 + 10;
+        setActiveGem({ id, x, y });
+        addToast('A Gem has appeared!', 'info');
+        
+        // Auto-despawn after 8 seconds
+        setTimeout(() => {
+          setActiveGem(prev => prev && prev.id === id ? null : prev);
+        }, 8000);
+      }
     }
 
     // Update Chart History (every 5 seconds)
@@ -246,7 +275,7 @@ const App: React.FC = () => {
     setGameState(state);
 
     requestRef.current = requestAnimationFrame(tick);
-  }, [getMultipliers, checkMissions]);
+  }, [getMultipliers, checkMissions, addToast]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(tick);
@@ -272,9 +301,34 @@ const App: React.FC = () => {
     const newState = { ...stateRef.current };
     newState.money += clickValue;
     newState.totalEarned += clickValue;
+
+    // Lucky Gem Drop (0.5% chance)
+    if (Math.random() < 0.005) {
+      newState.gems += 1;
+      spawnFloatingText(e.clientX, e.clientY, "+1 💎", "#22d3ee");
+      addToast("Lucky! Found 1 Gem!", "success");
+    }
     
     setGameState(newState);
     spawnFloatingText(e.clientX, e.clientY, `+${formatMoney(clickValue)}`);
+  };
+
+  const handleGemClick = () => {
+    if (!activeGem) return;
+    
+    const amount = Math.floor(Math.random() * 3) + 1; // 1 to 3 gems
+    const newState = { ...stateRef.current };
+    newState.gems += amount;
+    setGameState(newState);
+    
+    spawnFloatingText(
+      (activeGem.x / 100) * window.innerWidth, 
+      (activeGem.y / 100) * window.innerHeight, 
+      `+${amount} 💎`, 
+      "#22d3ee"
+    );
+    addToast(`Collected ${amount} Gem${amount > 1 ? 's' : ''}!`, 'success');
+    setActiveGem(null);
   };
 
   const getBusinessCost = (b: Business, count: number) => {
@@ -464,9 +518,11 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-20 selection:bg-cyan-500 selection:text-white">
+    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-20 selection:bg-cyan-500 selection:text-white relative overflow-hidden">
       <FloatingTexts texts={floatingTexts} />
       
+      {activeGem && <GemSpawn x={activeGem.x} y={activeGem.y} onClick={handleGemClick} />}
+
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
         {toasts.map(t => (
           <div key={t.id} className={`px-4 py-2 rounded-lg shadow-lg text-sm font-bold animate-pulse pointer-events-auto
@@ -506,7 +562,7 @@ const App: React.FC = () => {
       </header>
 
       {/* MAIN CONTENT */}
-      <main className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
+      <main className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4 relative z-10">
         
         {/* LEFT COLUMN: Controls & Stats */}
         <div className="space-y-6">
@@ -519,7 +575,7 @@ const App: React.FC = () => {
             >
               WORK HARDER
             </button>
-            <p className="mt-2 text-xs text-slate-400">Click to earn manual income</p>
+            <p className="mt-2 text-xs text-slate-400">Click to earn manual income (Chance for Gems!)</p>
           </div>
 
           <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700 h-64">
