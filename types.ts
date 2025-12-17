@@ -1,3 +1,4 @@
+
 export interface Business {
   id: number;
   name: string;
@@ -42,6 +43,20 @@ export interface MissionState {
   claimed: boolean;
 }
 
+export type ContractType = 'CLICK' | 'EARN_TIMED' | 'BUY_UPGRADE';
+
+export interface TimedMission {
+  id: number;
+  description: string;
+  type: ContractType;
+  targetAmount: number;
+  currentAmount: number;
+  duration: number; // Total duration in seconds
+  timeLeft: number; // Seconds remaining
+  rewardGems: number;
+  completed: boolean;
+}
+
 export interface GameState {
   money: number;
   gems: number;
@@ -52,6 +67,7 @@ export interface GameState {
   businesses: Business[];
   upgrades: Record<string, number>; // Upgrade ID -> Level
   missions: Record<string, MissionState>; // Mission ID -> State
+  activeTimedMissions: TimedMission[];
   lastSaveTime: number;
 }
 

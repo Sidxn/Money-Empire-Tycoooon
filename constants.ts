@@ -26,7 +26,7 @@ export const UPGRADES: UpgradeItem[] = [
   { id: 'profit_margin', title: "Profit Margins", desc: "Increases all income by 5%", costBase: 50000, costMult: 2.2, level: 0, type: 'money', effectType: 'income_mult', effectValue: 0.05 },
   { id: 'marketing_1', title: "Local Ads", desc: "Boosts income by 10%", costBase: 500000, costMult: 2.0, level: 0, type: 'money', effectType: 'income_mult', effectValue: 0.10 },
   { id: 'marketing_2', title: "TV Commercials", desc: "Boosts income by 25%", costBase: 25000000, costMult: 2.5, level: 0, type: 'money', effectType: 'income_mult', effectValue: 0.25 },
-  { id: 'workflow', title: "Workflow Optimization", desc: "Speed +5%", costBase: 250000, costMult: 2.0, level: 0, maxLevel: 20, type: 'money', effectType: 'speed_mult', effectValue: 0.05 },
+  { id: 'workflow', title: "Workflow Optimization", desc: "Speed +10%", costBase: 250000, costMult: 2.0, level: 0, maxLevel: 20, type: 'money', effectType: 'speed_mult', effectValue: 0.10 },
 ];
 
 export const LEGACY_UPGRADES: UpgradeItem[] = [

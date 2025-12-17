@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Business, GameState, FloatingText, Toast, UpgradeItem, MissionDefinition } from './types';
+import { Business, GameState, FloatingText, Toast, UpgradeItem, MissionDefinition, TimedMission } from './types';
 import { INITIAL_BUSINESSES, UPGRADES, LEGACY_UPGRADES, PRESTIGE_THRESHOLD, MISSIONS } from './constants';
 import { formatMoney, calculatePrestigePoints, formatNumber } from './utils';
 import BusinessCard from './components/BusinessCard';
@@ -21,113 +21,12 @@ const getInitialState = (): GameState => ({
   businesses: JSON.parse(JSON.stringify(INITIAL_BUSINESSES)),
   upgrades: {},
   missions: {},
+  activeTimedMissions: [],
   lastSaveTime: Date.now(),
 });
 
-const App: React.FC = () => {
-  // Game State
-  const [gameState, setGameState] = useState<GameState>(getInitialState);
-  const [historyData, setHistoryData] = useState<{ time: string; value: number }[]>([]);
-  
-  // UI State
-  const [activeTab, setActiveTab] = useState<'businesses' | 'research' | 'missions' | 'legacy'>('businesses');
-  const [showPrestigeModal, setShowPrestigeModal] = useState(false);
-  const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  
-  // Gem Spawn State
-  const [activeGem, setActiveGem] = useState<{ id: number; x: number; y: number } | null>(null);
-
-  // Refs for Game Loop
-  const stateRef = useRef(gameState);
-  const activeGemRef = useRef(activeGem);
-  const lastTickRef = useRef(Date.now());
-  const requestRef = useRef<number>(0);
-  const historyTimerRef = useRef(0);
-  const missionCheckTimerRef = useRef(0);
-  const gemSpawnTimerRef = useRef(0);
-
-  // Sync ref with state on manual updates (purchases, etc)
-  useEffect(() => {
-    stateRef.current = gameState;
-  }, [gameState]);
-
-  useEffect(() => {
-    activeGemRef.current = activeGem;
-  }, [activeGem]);
-
-  // Helper: Toast
-  const addToast = useCallback((message: string, type: Toast['type']) => {
-    const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
-  }, []);
-
-  // Helper: Floating Text
-  const spawnFloatingText = useCallback((x: number, y: number, text: string, color: string = '#fbbf24') => {
-    const id = Date.now() + Math.random();
-    setFloatingTexts(prev => [...prev, { id, x, y, text, color }]);
-    setTimeout(() => setFloatingTexts(prev => prev.filter(t => t.id !== id)), 1000);
-  }, []);
-
-  // Load Save
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Merge with initial to ensure new fields exist
-        const merged = { ...getInitialState(), ...parsed };
-        
-        // Ensure missions object exists if loading old save
-        if (!merged.missions) merged.missions = {};
-
-        // Calculate offline earnings
-        const now = Date.now();
-        const diffSeconds = (now - merged.lastSaveTime) / 1000;
-        if (diffSeconds > 10) {
-          let offlineEarnings = 0;
-          merged.businesses.forEach((b: Business) => {
-            if (b.hasManager && b.level > 0) {
-               // Simple approximation: (income / cycle) * seconds
-               const cps = b.baseIncome * b.level / b.cycleTime;
-               offlineEarnings += cps * diffSeconds;
-            }
-          });
-          
-          if (offlineEarnings > 0) {
-            merged.money += offlineEarnings;
-            merged.totalEarned += offlineEarnings;
-            addToast(`Offline Earnings: ${formatMoney(offlineEarnings)}`, 'success');
-          }
-        }
-        
-        setGameState(merged);
-        stateRef.current = merged;
-      } catch (e) {
-        console.error("Failed to load save", e);
-      }
-    }
-  }, [addToast]);
-
-  // Save Game
-  const saveGame = useCallback(() => {
-    const stateToSave = { ...stateRef.current, lastSaveTime: Date.now() };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
-    addToast('Game Saved', 'info');
-  }, [addToast]);
-
-  // Auto-save every 30s
-  useEffect(() => {
-    const interval = setInterval(saveGame, 30000);
-    return () => clearInterval(interval);
-  }, [saveGame]);
-
-  // Helper: Calculate Multipliers
-  const getMultipliers = useCallback(() => {
-    const state = stateRef.current;
-    
-    // Base Prestige Multiplier
+// Pure function to calculate multipliers based on state
+const calculateMultipliers = (state: GameState) => {
     let incomeMult = 1 * state.prestigeMultiplier; 
     let speedMult = 1;
     let costReduction = 1;
@@ -153,11 +52,200 @@ const App: React.FC = () => {
     });
 
     return { incomeMult, speedMult, costReduction, clickPower };
+};
+
+const App: React.FC = () => {
+  // Game State
+  const [gameState, setGameState] = useState<GameState>(getInitialState);
+  const [historyData, setHistoryData] = useState<{ time: string; value: number }[]>([]);
+  
+  // UI State
+  const [activeTab, setActiveTab] = useState<'businesses' | 'research' | 'achievements' | 'legacy'>('businesses');
+  const [showPrestigeModal, setShowPrestigeModal] = useState(false);
+  const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  
+  // Gem Spawn State
+  const [activeGem, setActiveGem] = useState<{ id: number; x: number; y: number } | null>(null);
+
+  // Refs for Game Loop
+  const stateRef = useRef(gameState);
+  const activeGemRef = useRef(activeGem);
+  const lastTickRef = useRef(Date.now());
+  const requestRef = useRef<number>(0);
+  const historyTimerRef = useRef(0);
+  const missionCheckTimerRef = useRef(0);
+  const gemSpawnTimerRef = useRef(0);
+  const contractSpawnTimerRef = useRef(0);
+  const lastRenderTimeRef = useRef(0);
+
+  // Sync ref with state on manual updates (purchases, etc)
+  useEffect(() => {
+    stateRef.current = gameState;
+  }, [gameState]);
+
+  useEffect(() => {
+    activeGemRef.current = activeGem;
+  }, [activeGem]);
+
+  // Memoize multipliers for UI rendering to ensure immediate visual updates
+  const multipliers = useMemo(() => calculateMultipliers(gameState), [gameState]);
+
+  // Helper: Toast
+  const addToast = useCallback((message: string, type: Toast['type']) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+  }, []);
+
+  // Helper: Floating Text
+  const spawnFloatingText = useCallback((x: number, y: number, text: string, color: string = '#fbbf24') => {
+    const id = Date.now() + Math.random();
+    setFloatingTexts(prev => [...prev, { id, x, y, text, color }]);
+    setTimeout(() => setFloatingTexts(prev => prev.filter(t => t.id !== id)), 1000);
+  }, []);
+
+  // Load Save
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Merge with initial to ensure new fields exist
+        const merged = { ...getInitialState(), ...parsed };
+        
+        // Ensure missions/contracts object exists if loading old save
+        if (!merged.missions) merged.missions = {};
+        if (!merged.activeTimedMissions) merged.activeTimedMissions = [];
+
+        // Calculate offline earnings
+        const now = Date.now();
+        const diffSeconds = (now - merged.lastSaveTime) / 1000;
+        
+        // We need multipliers for offline calc
+        const { incomeMult, speedMult } = calculateMultipliers(merged);
+
+        if (diffSeconds > 10) {
+          let offlineEarnings = 0;
+          merged.businesses.forEach((b: Business) => {
+            if (b.hasManager && b.level > 0) {
+               // Approximate: (income / cycle) * seconds
+               // Cycle time effectively reduced by speedMult, so rate is higher
+               const effectiveCycle = b.cycleTime / speedMult;
+               const incomePerCycle = b.baseIncome * b.level * incomeMult;
+               const cps = incomePerCycle / effectiveCycle;
+               offlineEarnings += cps * diffSeconds;
+            }
+          });
+          
+          if (offlineEarnings > 0) {
+            merged.money += offlineEarnings;
+            merged.totalEarned += offlineEarnings;
+            addToast(`Offline Earnings: ${formatMoney(offlineEarnings)}`, 'success');
+          }
+
+          // Clear expired contracts while offline
+          merged.activeTimedMissions = merged.activeTimedMissions.filter((tm: TimedMission) => {
+             // Reduce time left by offline time, remove if < 0
+             tm.timeLeft -= diffSeconds;
+             return tm.timeLeft > 0;
+          });
+        }
+        
+        setGameState(merged);
+        stateRef.current = merged;
+      } catch (e) {
+        console.error("Failed to load save", e);
+      }
+    }
+  }, [addToast]);
+
+  // Save Game
+  const saveGame = useCallback(() => {
+    const stateToSave = { ...stateRef.current, lastSaveTime: Date.now() };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
+    addToast('Game Saved', 'info');
+  }, [addToast]);
+
+  // Auto-save every 30s
+  useEffect(() => {
+    const interval = setInterval(saveGame, 30000);
+    return () => clearInterval(interval);
+  }, [saveGame]);
+
+  // Contract Generator
+  const generateContract = useCallback((currentState: GameState): TimedMission | null => {
+    // Only allow max 3 contracts
+    if (currentState.activeTimedMissions.length >= 3) return null;
+
+    // Calculate current CPS (Cash Per Second) to scale difficulty
+    const { incomeMult, speedMult } = calculateMultipliers(currentState);
+    let cps = 0;
+    currentState.businesses.forEach(b => {
+        if (b.level > 0 && b.hasManager) {
+            cps += (b.baseIncome * b.level * incomeMult) / (b.cycleTime / speedMult);
+        }
+    });
+    // Fallback if low cps (early game)
+    if (cps < 1) cps = 1;
+
+    const rand = Math.random();
+    let type: 'CLICK' | 'EARN_TIMED' | 'BUY_UPGRADE' = 'CLICK';
+    let target = 0;
+    let desc = '';
+    let duration = 60;
+    let reward = 1;
+
+    if (rand < 0.5) {
+        // EARN MISSION: Earn X amount in Y seconds
+        type = 'EARN_TIMED';
+        duration = 60 + Math.floor(Math.random() * 60); // 60-120s
+        
+        // Difficulty Tuning:
+        // Target = CpS * Duration * Multiplier
+        // 1.0 would be passive income alone.
+        // 1.1 - 1.25 requires active clicking (approx 2-5 clicks per sec depending on buffs).
+        const multiplier = 1.1 + (Math.random() * 0.15); 
+        
+        target = cps * duration * multiplier;
+        // Early game adjustment
+        if (target < 50) target = 50; 
+        
+        desc = `Earn ${formatMoney(target)} in ${duration}s`;
+        reward = 3 + Math.floor(Math.random() * 3);
+    } else if (rand < 0.8) {
+        // CLICK MISSION
+        type = 'CLICK';
+        duration = 30 + Math.floor(Math.random() * 30);
+        target = 20 + Math.floor(Math.random() * 30); // 20-50 clicks
+        desc = `Work Harder (Click) ${target} times`;
+        reward = 2;
+    } else {
+        // BUY UPGRADE
+        type = 'BUY_UPGRADE';
+        duration = 120;
+        target = 3;
+        desc = `Buy any 3 Business levels`;
+        reward = 4;
+    }
+
+    return {
+        id: Date.now(),
+        type,
+        targetAmount: target,
+        currentAmount: 0,
+        description: desc,
+        duration,
+        timeLeft: duration,
+        rewardGems: reward,
+        completed: false
+    };
   }, []);
 
   // Mission Check Logic
   const checkMissions = useCallback((currentState: GameState) => {
     let changed = false;
+    // Deep copy missions to safely mutate
     const newMissions = { ...currentState.missions };
 
     MISSIONS.forEach(mission => {
@@ -200,34 +288,88 @@ const App: React.FC = () => {
 
     const state = { ...stateRef.current };
     let moneyGained = 0;
-    const { incomeMult, speedMult } = getMultipliers();
+    
+    // Calculate logic multipliers for the simulation
+    const { incomeMult, speedMult } = calculateMultipliers(state);
+    let stateChanged = false;
 
     // Process Businesses
-    state.businesses = state.businesses.map(b => {
+    const newBusinesses = state.businesses.map(b => {
       if (b.level === 0) return b;
+      if (!b.hasManager) return b;
 
       const cycleTime = b.cycleTime / speedMult;
+      let newProgress = b.progress + (dt / cycleTime) * 100;
       
-      // If manager exists, auto-progress
-      if (b.hasManager) {
-        let newProgress = b.progress + (dt / cycleTime) * 100;
-        
-        if (newProgress >= 100) {
-          // Calculate how many cycles finished
-          const cycles = Math.floor(newProgress / 100);
-          const payout = (b.baseIncome * b.level * incomeMult) * cycles;
-          moneyGained += payout;
-          newProgress = newProgress % 100;
-        }
-        return { ...b, progress: newProgress };
-      } 
-      return b;
+      if (newProgress >= 100) {
+        const cycles = Math.floor(newProgress / 100);
+        const payout = (b.baseIncome * b.level * incomeMult) * cycles;
+        moneyGained += payout;
+        newProgress = newProgress % 100;
+      }
+
+      stateChanged = true;
+      return { ...b, progress: newProgress };
     });
+
+    if (stateChanged) {
+      state.businesses = newBusinesses;
+    }
 
     // Update State if money changed
     if (moneyGained > 0) {
       state.money += moneyGained;
       state.totalEarned += moneyGained;
+    }
+
+    // --- CONTRACTS (Timed Missions) ---
+    // 1. Process Active Contracts
+    if (state.activeTimedMissions && state.activeTimedMissions.length > 0) {
+        const updatedContracts = state.activeTimedMissions.map(tm => {
+            if (tm.completed) return tm; // Already waiting for claim
+            
+            // Reduce Time
+            const newTimeLeft = tm.timeLeft - dt;
+            
+            // Auto-update 'EARN' missions
+            let newAmount = tm.currentAmount;
+            if (tm.type === 'EARN_TIMED') {
+                newAmount += moneyGained;
+            }
+
+            // Check Success
+            const completed = newTimeLeft > 0 && newAmount >= tm.targetAmount;
+            
+            return { 
+                ...tm, 
+                timeLeft: newTimeLeft, 
+                currentAmount: newAmount, 
+                completed 
+            };
+        }).filter(tm => {
+            // Remove if expired and not completed
+            return tm.timeLeft > 0 || tm.completed;
+        });
+
+        // Check for expiration (filter changed length) or updates
+        if (JSON.stringify(updatedContracts) !== JSON.stringify(state.activeTimedMissions)) {
+            state.activeTimedMissions = updatedContracts;
+            stateChanged = true;
+        }
+    }
+
+    // 2. Spawn New Contract (Every 45-90s approx, low chance per tick)
+    contractSpawnTimerRef.current += dt;
+    if (contractSpawnTimerRef.current > 1) {
+        contractSpawnTimerRef.current = 0;
+        if (state.activeTimedMissions.length < 3 && Math.random() < 0.05) {
+             const newContract = generateContract(state);
+             if (newContract) {
+                 state.activeTimedMissions = [...state.activeTimedMissions, newContract];
+                 addToast("New Contract Available!", 'info');
+                 stateChanged = true;
+             }
+        }
     }
 
     // Check Missions periodically
@@ -237,6 +379,7 @@ const App: React.FC = () => {
         const missionsUpdatedState = checkMissions(state);
         if (missionsUpdatedState) {
             Object.assign(state, missionsUpdatedState);
+            stateChanged = true;
         }
     }
 
@@ -244,15 +387,12 @@ const App: React.FC = () => {
     gemSpawnTimerRef.current += dt;
     if (gemSpawnTimerRef.current >= 1) {
       gemSpawnTimerRef.current = 0;
-      // ~2.2% chance per second to spawn if none active (avg every 45s)
       if (!activeGemRef.current && Math.random() < 0.022) {
         const id = Date.now();
-        const x = Math.random() * 80 + 10; // 10% to 90%
+        const x = Math.random() * 80 + 10;
         const y = Math.random() * 80 + 10;
         setActiveGem({ id, x, y });
         addToast('A Gem has appeared!', 'info');
-        
-        // Auto-despawn after 8 seconds
         setTimeout(() => {
           setActiveGem(prev => prev && prev.id === id ? null : prev);
         }, 8000);
@@ -272,10 +412,15 @@ const App: React.FC = () => {
     
     // Commit state
     stateRef.current = state;
-    setGameState(state);
+    
+    // Throttle React State Updates
+    if (now - lastRenderTimeRef.current >= 33) {
+      setGameState(state);
+      lastRenderTimeRef.current = now;
+    }
 
     requestRef.current = requestAnimationFrame(tick);
-  }, [getMultipliers, checkMissions, addToast]);
+  }, [checkMissions, addToast, generateContract]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(tick);
@@ -286,7 +431,7 @@ const App: React.FC = () => {
 
   // ACTIONS
   const handleManualWork = (e: React.MouseEvent) => {
-    const { incomeMult, clickPower } = getMultipliers();
+    const { incomeMult, clickPower, speedMult } = calculateMultipliers(stateRef.current);
     
     // Base * Multiplier * ClickPower
     const baseClick = 1 * incomeMult * clickPower;
@@ -294,13 +439,29 @@ const App: React.FC = () => {
     // 5% of CpS bonus
     let cps = 0;
     stateRef.current.businesses.forEach(b => {
-        if(b.level > 0) cps += (b.baseIncome * b.level) / b.cycleTime;
+        if(b.level > 0) cps += (b.baseIncome * b.level * incomeMult) / (b.cycleTime / speedMult);
     });
-    const clickValue = Math.max(1, (baseClick + (cps * 0.05 * incomeMult)));
+    const clickValue = Math.max(1, (baseClick + (cps * 0.05)));
 
     const newState = { ...stateRef.current };
     newState.money += clickValue;
     newState.totalEarned += clickValue;
+
+    // Update Contracts (Click type)
+    if (newState.activeTimedMissions) {
+        newState.activeTimedMissions = newState.activeTimedMissions.map(tm => {
+            if (tm.type === 'CLICK' && !tm.completed) {
+                const newAmount = tm.currentAmount + 1;
+                return { ...tm, currentAmount: newAmount, completed: newAmount >= tm.targetAmount };
+            }
+            // Update EARN type as well with manual income
+            if (tm.type === 'EARN_TIMED' && !tm.completed) {
+                 const newAmount = tm.currentAmount + clickValue;
+                 return { ...tm, currentAmount: newAmount, completed: newAmount >= tm.targetAmount };
+            }
+            return tm;
+        });
+    }
 
     // Lucky Gem Drop (0.5% chance)
     if (Math.random() < 0.005) {
@@ -331,8 +492,7 @@ const App: React.FC = () => {
     setActiveGem(null);
   };
 
-  const getBusinessCost = (b: Business, count: number) => {
-    const { costReduction } = getMultipliers();
+  const calculateBusinessCost = (b: Business, count: number, costReduction: number) => {
     const growth = 1.15; 
     const currentBaseCost = b.baseCost * Math.pow(growth, b.level);
     
@@ -351,12 +511,25 @@ const App: React.FC = () => {
     const businessIndex = state.businesses.findIndex(b => b.id === id);
     if (businessIndex === -1) return;
     
+    const { costReduction } = calculateMultipliers(state);
     const business = state.businesses[businessIndex];
-    const cost = getBusinessCost(business, count);
+    const cost = calculateBusinessCost(business, count, costReduction);
     
     if (state.money >= cost) {
       state.money -= cost;
       state.businesses[businessIndex].level += count;
+      
+      // Update BUY contracts
+      if (state.activeTimedMissions) {
+          state.activeTimedMissions = state.activeTimedMissions.map(tm => {
+              if (tm.type === 'BUY_UPGRADE' && !tm.completed) {
+                  const newAmount = tm.currentAmount + count;
+                  return { ...tm, currentAmount: newAmount, completed: newAmount >= tm.targetAmount };
+              }
+              return tm;
+          });
+      }
+
       setGameState(state);
       addToast(`Upgraded ${business.name}`, 'success');
     } else {
@@ -380,7 +553,11 @@ const App: React.FC = () => {
   };
 
   const buyUpgrade = (upgrade: UpgradeItem) => {
-    const state = { ...stateRef.current };
+    // Clone state and upgrades object to ensure immutability and correct React updates
+    const state = { 
+        ...stateRef.current,
+        upgrades: { ...stateRef.current.upgrades }
+    };
     const currentLevel = state.upgrades[upgrade.id] || 0;
     
     if (upgrade.maxLevel && currentLevel >= upgrade.maxLevel) return;
@@ -419,19 +596,34 @@ const App: React.FC = () => {
   };
 
   const claimMission = (id: string) => {
-      const state = { ...stateRef.current };
+      // 1. Deep copy to ensure React State Change detection
+      const newState = JSON.parse(JSON.stringify(stateRef.current));
       const mission = MISSIONS.find(m => m.id === id);
-      const missionState = state.missions[id];
+      const missionState = newState.missions[id];
 
       if (mission && missionState && missionState.completed && !missionState.claimed) {
           // Grant Reward
-          if (mission.rewardType === 'money') state.money += mission.rewardValue;
-          if (mission.rewardType === 'gems') state.gems += mission.rewardValue;
-          if (mission.rewardType === 'legacy') state.legacyPoints += mission.rewardValue;
+          if (mission.rewardType === 'money') newState.money += mission.rewardValue;
+          if (mission.rewardType === 'gems') newState.gems += mission.rewardValue;
+          if (mission.rewardType === 'legacy') newState.legacyPoints += mission.rewardValue;
 
-          state.missions[id].claimed = true;
-          setGameState(state);
+          newState.missions[id].claimed = true;
+          
+          setGameState(newState);
           spawnFloatingText(window.innerWidth / 2, window.innerHeight / 2, `Reward Claimed!`, '#10b981');
+      }
+  };
+
+  const claimContract = (index: number) => {
+      const newState = { ...stateRef.current };
+      const contract = newState.activeTimedMissions[index];
+      
+      if (contract && contract.completed) {
+          newState.gems += contract.rewardGems;
+          // Remove contract after claim
+          newState.activeTimedMissions.splice(index, 1);
+          setGameState(newState);
+          addToast(`Contract Complete! +${contract.rewardGems} Gems`, 'success');
       }
   };
 
@@ -477,11 +669,27 @@ const App: React.FC = () => {
   // RENDER HELPERS
   const potentialPrestigePoints = calculatePrestigePoints(stateRef.current.totalEarned);
 
-  // Count claimable missions
-  const claimableCount = MISSIONS.filter(m => {
-      const s = gameState.missions[m.id];
-      return s && s.completed && !s.claimed;
-  }).length;
+  // Count claimable achievements
+  const claimableCount = useMemo(() => {
+    const achievementCount = MISSIONS.filter(m => {
+        const s = gameState.missions[m.id];
+        return s && s.completed && !s.claimed;
+    }).length;
+
+    const contractCount = (gameState.activeTimedMissions || []).filter(c => c.completed).length;
+
+    return achievementCount + contractCount;
+  }, [gameState.missions, gameState.activeTimedMissions]);
+
+  // Calculate stats for display
+  const currentClickValue = useMemo(() => {
+    const baseClick = 1 * multipliers.incomeMult * multipliers.clickPower;
+    let cps = 0;
+    gameState.businesses.forEach(b => {
+        if(b.level > 0) cps += (b.baseIncome * b.level * multipliers.incomeMult) / (b.cycleTime / multipliers.speedMult);
+    });
+    return Math.max(1, (baseClick + (cps * 0.05)));
+  }, [gameState.businesses, multipliers]);
 
   const renderUpgradeList = (list: UpgradeItem[]) => (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -575,7 +783,9 @@ const App: React.FC = () => {
             >
               WORK HARDER
             </button>
-            <p className="mt-2 text-xs text-slate-400">Click to earn manual income (Chance for Gems!)</p>
+            <p className="mt-2 text-xs text-slate-400">
+                Click: {formatMoney(currentClickValue)} (Chance for Gems!)
+            </p>
           </div>
 
           <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700 h-64">
@@ -627,10 +837,10 @@ const App: React.FC = () => {
               Research
             </button>
             <button 
-              onClick={() => setActiveTab('missions')}
-              className={`flex-1 px-3 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap relative ${activeTab === 'missions' ? 'bg-slate-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+              onClick={() => setActiveTab('achievements')}
+              className={`flex-1 px-3 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap relative ${activeTab === 'achievements' ? 'bg-slate-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
             >
-              Missions
+              Achievements
               {claimableCount > 0 && (
                 <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] text-white animate-bounce">
                   {claimableCount}
@@ -647,18 +857,25 @@ const App: React.FC = () => {
 
           {activeTab === 'businesses' && (
             <div className="space-y-3">
-              {gameState.businesses.map(business => (
-                <BusinessCard
-                  key={business.id}
-                  business={business}
-                  canAfford={(cost) => gameState.money >= cost}
-                  canAffordManager={gameState.money >= business.managerCost}
-                  buyCost1={getBusinessCost(business, 1)}
-                  buyCost10={getBusinessCost(business, 10)}
-                  onBuy={(count) => buyBusiness(business.id, count)}
-                  onHire={() => hireManager(business.id)}
-                />
-              ))}
+              {gameState.businesses.map(business => {
+                  const currentIncome = business.baseIncome * (business.level || 1) * multipliers.incomeMult;
+                  const currentCycleTime = business.cycleTime / multipliers.speedMult;
+                  
+                  return (
+                    <BusinessCard
+                      key={business.id}
+                      business={business}
+                      canAfford={(cost) => gameState.money >= cost}
+                      canAffordManager={gameState.money >= business.managerCost}
+                      buyCost1={calculateBusinessCost(business, 1, multipliers.costReduction)}
+                      buyCost10={calculateBusinessCost(business, 10, multipliers.costReduction)}
+                      onBuy={(count) => buyBusiness(business.id, count)}
+                      onHire={() => hireManager(business.id)}
+                      currentIncome={currentIncome}
+                      currentCycleTime={currentCycleTime}
+                    />
+                  );
+              })}
             </div>
           )}
 
@@ -679,44 +896,94 @@ const App: React.FC = () => {
              </div>
           )}
 
-          {activeTab === 'missions' && (
-            <div className="space-y-3">
-                <h3 className="text-xl font-bold text-amber-400 mb-4 flex items-center gap-2">
-                    <span>🏆</span> Achievements
-                </h3>
-                {MISSIONS.map(mission => {
-                    const state = gameState.missions[mission.id] || { completed: false, claimed: false };
-                    
-                    // Calc progress
-                    let progressText = "";
-                    let progressPercent = 0;
-                    if (state.completed) {
-                        progressText = "Completed";
-                        progressPercent = 100;
-                    } else if (mission.type === 'EARN_TOTAL') {
-                        progressText = `${formatNumber(gameState.totalEarned)} / ${formatNumber(mission.targetValue)}`;
-                        progressPercent = (gameState.totalEarned / mission.targetValue) * 100;
-                    } else if (mission.type === 'OWN_BUSINESS') {
-                        const bus = gameState.businesses.find(b => b.id === mission.targetId);
-                        const current = bus ? bus.level : 0;
-                        progressText = `${current} / ${mission.targetValue}`;
-                        progressPercent = (current / mission.targetValue) * 100;
-                    } else if (mission.type === 'HIRE_MANAGER') {
-                        progressText = "Not Hired";
-                        progressPercent = 0;
-                    }
+          {activeTab === 'achievements' && (
+            <div className="space-y-6">
+                
+                {/* TIMED CONTRACTS SECTION */}
+                <div className="bg-slate-800/50 rounded-xl p-4 border border-blue-500/30">
+                    <h3 className="text-lg font-bold text-blue-400 mb-2 flex items-center gap-2">
+                        <span>⚡</span> Daily Contracts (Timed)
+                    </h3>
+                    {(!gameState.activeTimedMissions || gameState.activeTimedMissions.length === 0) && (
+                        <p className="text-sm text-slate-500 italic">No contracts available right now. Wait a moment...</p>
+                    )}
+                    <div className="space-y-2">
+                        {gameState.activeTimedMissions && gameState.activeTimedMissions.map((contract, index) => (
+                            <div key={contract.id} className="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center relative overflow-hidden">
+                                {contract.completed && (
+                                     <div className="absolute inset-0 bg-emerald-500/10 animate-pulse"></div>
+                                )}
+                                <div className="z-10 flex-grow">
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="font-bold text-slate-200">{contract.description}</span>
+                                        <span className={`${contract.timeLeft < 10 && !contract.completed ? 'text-red-500 font-bold' : 'text-slate-400'}`}>
+                                            {contract.completed ? 'Done' : `${contract.timeLeft.toFixed(0)}s`}
+                                        </span>
+                                    </div>
+                                    <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                                        <div 
+                                            className="h-full bg-blue-500 transition-all duration-300"
+                                            style={{width: `${Math.min(100, (contract.currentAmount / contract.targetAmount) * 100)}%`}}
+                                        ></div>
+                                    </div>
+                                </div>
+                                <div className="z-10 ml-4">
+                                    <button 
+                                        onClick={() => claimContract(index)}
+                                        disabled={!contract.completed}
+                                        className={`px-3 py-1 text-xs font-bold rounded ${contract.completed 
+                                            ? 'bg-emerald-600 text-white hover:bg-emerald-500' 
+                                            : 'bg-slate-700 text-slate-500'}`}
+                                    >
+                                        {contract.completed ? `Claim 💎${contract.rewardGems}` : 'Active'}
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
 
-                    return (
-                        <MissionItem 
-                            key={mission.id} 
-                            mission={mission} 
-                            state={state} 
-                            onClaim={claimMission}
-                            progressText={progressText}
-                            progressPercent={progressPercent}
-                        />
-                    );
-                })}
+                {/* ACHIEVEMENTS SECTION */}
+                <div>
+                    <h3 className="text-xl font-bold text-amber-400 mb-4 flex items-center gap-2">
+                        <span>🏆</span> Achievements
+                    </h3>
+                    <div className="space-y-3">
+                        {MISSIONS.map(mission => {
+                            const state = gameState.missions[mission.id] || { completed: false, claimed: false };
+                            
+                            // Calc progress
+                            let progressText = "";
+                            let progressPercent = 0;
+                            if (state.completed) {
+                                progressText = "Completed";
+                                progressPercent = 100;
+                            } else if (mission.type === 'EARN_TOTAL') {
+                                progressText = `${formatNumber(gameState.totalEarned)} / ${formatNumber(mission.targetValue)}`;
+                                progressPercent = (gameState.totalEarned / mission.targetValue) * 100;
+                            } else if (mission.type === 'OWN_BUSINESS') {
+                                const bus = gameState.businesses.find(b => b.id === mission.targetId);
+                                const current = bus ? bus.level : 0;
+                                progressText = `${current} / ${mission.targetValue}`;
+                                progressPercent = (current / mission.targetValue) * 100;
+                            } else if (mission.type === 'HIRE_MANAGER') {
+                                progressText = "Not Hired";
+                                progressPercent = 0;
+                            }
+
+                            return (
+                                <MissionItem 
+                                    key={mission.id} 
+                                    mission={mission} 
+                                    state={state} 
+                                    onClaim={claimMission}
+                                    progressText={progressText}
+                                    progressPercent={progressPercent}
+                                />
+                            );
+                        })}
+                    </div>
+                </div>
             </div>
           )}
 

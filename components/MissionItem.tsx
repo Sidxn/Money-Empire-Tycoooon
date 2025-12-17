@@ -10,7 +10,7 @@ interface Props {
   progressPercent: number;
 }
 
-const MissionItem: React.FC<Props> = ({ mission, state, onClaim, progressText, progressPercent }) => {
+const MissionItem: React.FC<Props> = React.memo(({ mission, state, onClaim, progressText, progressPercent }) => {
   return (
     <div className={`p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all
       ${state.completed 
@@ -70,6 +70,6 @@ const MissionItem: React.FC<Props> = ({ mission, state, onClaim, progressText, p
       </div>
     </div>
   );
-};
+});
 
 export default MissionItem;

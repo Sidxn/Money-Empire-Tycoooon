@@ -10,9 +10,11 @@ interface Props {
   canAffordManager: boolean;
   buyCost1: number;
   buyCost10: number;
+  currentIncome: number;
+  currentCycleTime: number;
 }
 
-const BusinessCard: React.FC<Props> = ({
+const BusinessCard: React.FC<Props> = React.memo(({
   business,
   onBuy,
   onHire,
@@ -20,8 +22,15 @@ const BusinessCard: React.FC<Props> = ({
   canAffordManager,
   buyCost1,
   buyCost10,
+  currentIncome,
+  currentCycleTime,
 }) => {
   const isLocked = business.level === 0 && business.id > 0 && !canAfford(buyCost1);
+
+  // Format cycle time nicely
+  const formattedTime = currentCycleTime < 1 
+    ? `${(currentCycleTime * 1000).toFixed(0)}ms`
+    : `${currentCycleTime.toFixed(2)}s`;
 
   return (
     <div className={`relative p-4 rounded-xl border border-slate-700 bg-slate-800/50 shadow-lg transition-all duration-300 ${isLocked ? 'opacity-50 grayscale' : 'hover:border-slate-500'}`}>
@@ -41,14 +50,18 @@ const BusinessCard: React.FC<Props> = ({
           {/* Progress Bar */}
           <div className="h-3 w-full bg-slate-900 rounded-full overflow-hidden mb-2 relative">
             <div
-              className={`h-full transition-all duration-100 ease-linear ${business.hasManager ? 'bg-gradient-to-r from-emerald-500 to-emerald-400' : 'bg-amber-500'}`}
+              className={`h-full ${business.hasManager ? 'bg-gradient-to-r from-emerald-500 to-emerald-400' : 'bg-amber-500'}`}
               style={{ width: `${business.progress}%` }}
             />
           </div>
           
           <div className="flex justify-between text-xs text-slate-400 font-mono">
-            <span>{formatMoney(business.baseIncome * (business.level || 1))} / cycle</span>
-            <span>{business.cycleTime}s</span>
+            <span className={business.level > 0 ? "text-emerald-400 font-bold" : ""}>
+              {formatMoney(currentIncome)} / cycle
+            </span>
+            <span className="text-cyan-200">
+              {formattedTime}
+            </span>
           </div>
         </div>
       </div>
@@ -102,6 +115,6 @@ const BusinessCard: React.FC<Props> = ({
       </div>
     </div>
   );
-};
+});
 
 export default BusinessCard;
